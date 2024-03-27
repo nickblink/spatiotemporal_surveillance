@@ -13,6 +13,8 @@ rstan_options(auto_write = TRUE)
 # For submission to a high performance computing cluster, this allows parameters to be input with `inputs <- commandArgs(trailingOnly = TRUE)`
 inputs <- c('p=0.1:b0_mean=6:b1_mean=n0.25:missingness=mcar:DGP=WF:R=1000:num_jobs=50:output_path=mcar01_WF_QPtheta9_beta06_beta1n025_ID499135_2023_12_05:theta=9:family=quasipoisson\r','3')
 
+inputs <- c('p=0.1:b0_mean=6:b1_mean=n0.25:missingness=mcar:DGP=freqGLM:R=1000:rho_DGP=0.2:alpha_DGP=0.2:num_jobs=50:output_path=mcar01_WF_QPtheta9_beta06_beta1n025_ID499135_2023_12_05:theta=9:family=quasipoisson\r','3')
+
 ### Get parameters
 {
 # pull parameters into proper format

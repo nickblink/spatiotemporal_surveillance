@@ -25,6 +25,30 @@ rqpois <- function(n, mu, theta) {
 }
 
 
+### make the adjacency matrix according to all facilities in a district being neighbors.
+# df: data frame containing a list of facilities and districts.
+# scale_by_num_neighbors: If true, then the weights in each column are scaled to sum to one. 
+make_district_adjacency <- function(df, scale_by_num_neighbors = F){
+  
+  # get the adjacency matrix
+  D2 = df %>% dplyr::select(district, facility) %>% 
+    distinct() %>%
+    arrange(facility)
+  W = full_join(D2, D2, by = 'district') %>%
+    filter(facility.x != facility.y) %>%
+    dplyr::select(-district) %>%
+    igraph::graph_from_data_frame() %>%
+    igraph::as_adjacency_matrix() %>%
+    as.matrix()
+  
+  # scale the neighbor sum by the number of neighbors
+  if(scale_by_num_neighbors){
+    W = apply(W, 2, function(xx) xx/sum(xx))
+  }
+  
+  return(W)
+}
+
 #### Simulation Functions ####
 
 ### Function to initialize the data frame for data simulation.
@@ -177,12 +201,17 @@ simulate_data <- function(district_sizes, R = 1, seed = 10, type = 'WF', family 
     }
     
   }else if(type == 'CAR'){
+    # extracting values.
+    rho = list(...)$rho_DGP
+    alpha = list(...)$alpha_DGP
+    tau2 = list(...)$tau2_DGP
     
-    rho = list(...)$rho
-    alpha = list(...)$alpha
-    tau2 = list(...)$tau2
+    # checking all values are in parameters.
+    if(is.null(rho)){stop('please put in a rho_DGP value with CAR DGP')}
+    if(is.null(alpha)){stop('please put in a alpha_DGP value with CAR DGP')}
+    if(is.null(tau2)){stop('please put in a tau2_DGP value with CAR DGP')}
     
-    # add in the mean effects because these are the same for all simulations
+    # add in the mean effects because these are the same for all simulations.
     df = do.call('rbind', lapply(facilities, function(xx){
       tmp = df %>% filter(facility == xx)
       
@@ -205,7 +234,7 @@ simulate_data <- function(district_sizes, R = 1, seed = 10, type = 'WF', family 
       return(tmp)
     }))
     
-    # make the spatio-temporal precision matrix
+    # make the spatio-temporal precision matrix.
     Q = make_precision_mat(df, rho = rho)
     
     tryCatch({
@@ -216,18 +245,18 @@ simulate_data <- function(district_sizes, R = 1, seed = 10, type = 'WF', family 
       browser()
     })
     
-    # checking ordering of facilities matches
+    # checking ordering of facilities matches.
     if(!identical(colnames(V), as.character(facilities))){
       browser()
       stop('names of covariances and facilities dont match')
     }
     
-    # add in the marginal variance to original df
+    # add in the marginal variance to original df.
     dV = diag(V)
     matid = match(df$facility, names(dV))
     df$sigma2_marginal = dV[matid]
     
-    # make R sampled sets of data
+    # make R sampled sets of data.
     df_lst = lapply(1:R, function(r){
       ### get the spatio-temporal random effects
       # initialize phi
@@ -274,7 +303,7 @@ simulate_data <- function(district_sizes, R = 1, seed = 10, type = 'WF', family 
       return(df)
     })
     
-    # cycle through each created data frame
+    # cycle through each created data frame.
     district_lst = lapply(df_lst, function(df){
       # cycle through each district
       district <- do.call('rbind', lapply(districts, function(d){
@@ -313,13 +342,18 @@ simulate_data <- function(district_sizes, R = 1, seed = 10, type = 'WF', family 
     })
     
   }else if(type == 'freqGLM'){
+    # extracting values
     rho = list(...)$rho
     alpha = list(...)$alpha
     
-    # get the adjacency matrix
+    # checking values are in list.
+    if(is.null(rho)){stop('please put in a rho_DGP value with freqGLM DGP')}
+    if(is.null(alpha)){stop('please put in a alpha_DGP value with freqGLM DGP')}
+
+    # get the adjacency matrix.
     W <- make_district_adjacency(df, scale_by_num_neighbors = T)
     
-    # add in the mean effects because these are the same for all simulations
+    # add in the mean effects because these are the same for all simulations.
     df = do.call('rbind', lapply(facilities, function(xx){
       tmp = df %>% filter(facility == xx)
       
@@ -344,7 +378,7 @@ simulate_data <- function(district_sizes, R = 1, seed = 10, type = 'WF', family 
     
     df$y_exp = df$y_var = df$y = NA
     
-    # make R sampled sets of data
+    # make R sampled sets of data.
     df_lst = lapply(1:R, function(r){
       
       ### Get the first time point values
@@ -391,7 +425,7 @@ simulate_data <- function(district_sizes, R = 1, seed = 10, type = 'WF', family 
       df
     })
     
-    # group the results by district
+    # group the results by district.
     district_lst <- lapply(df_lst, function(df){
       district <- df %>%
         group_by(district, date) %>%
@@ -405,7 +439,7 @@ simulate_data <- function(district_sizes, R = 1, seed = 10, type = 'WF', family 
     stop('please input a proper type')
   }
   
-  # make list of values to return
+  # make list of values to return.
   res_lst = list(df_list = df_lst, district_list = district_lst, betas = betas)
   return(res_lst)
 }
