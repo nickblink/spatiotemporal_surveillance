@@ -16,6 +16,91 @@ add_periodic_cov <- function(df, period = 12){
   return(df)
 }
 
+### compute the sum of the values at all the neighbors to a given facility
+# df: Input data frame.
+# target_col: name of outcome column.
+# lag: Temporal lag of neighbors in sum.
+# scale_by_num_neighbors: If true, then the weights in each column are scaled to sum to one. 
+# W: The adjacency matrix. If Null, W is calculate within this function.
+add_neighbors <- function(df, target_col = 'y', lag = 1, scale_by_num_neighbors = F, W = NULL){
+  if(lag == 0){
+    print('WARNING: not doing a lag of 1 on the neighbors, so not using the same model as in the papers')
+  }
+  
+  # remove the neighbor column
+  if('y.neighbors' %in% colnames(df)){
+    df$y.neighbors = NULL
+  }
+  
+  # get the adjacency matrix
+  if(is.null(W)){
+    W <- make_district_adjacency(df, scale_by_num_neighbors)
+  }
+  
+  # get the counts for each facility 
+  y.counts <- df %>% 
+    dplyr::select(date, facility, UQ(target_col)) %>%
+    arrange(facility) %>%
+    tidyr::spread(facility,get(target_col)) %>% 
+    arrange(date)
+  
+  # check that the column names match
+  if(!identical(colnames(W), colnames(y.counts)[-1])){
+    # if the colnames do match but are in the wrong order, reorder them
+    if(length(setdiff(colnames(W), colnames(y.counts)[-1])) == 0 &
+       length(setdiff(colnames(y.counts)[-1], colnames(W))) == 0){
+      
+      matid = match(colnames(y.counts)[-1], colnames(W))
+      y.counts = y.counts[,c(1, matid + 1)]
+      
+      # for error checking
+      if(!identical(colnames(W), colnames(y.counts)[-1])){browser()}
+    }else{
+      stop('Adjacency and y matrix column names dont match')
+    }
+    ind = which(colnames(W) != colnames(y.counts)[-1])
+  }
+  
+  # shift y.counts by lag
+  if(lag > 0){
+    tmp <- y.counts
+    tmp[1:lag,-1] <- NA
+    tmp[(lag+1):nrow(tmp),-1] <- y.counts[1:(nrow(y.counts) - lag),-1]
+    y.counts <- tmp
+  }
+  
+  # merge back into original data frame
+  tmp = cbind(y.counts[,'date',drop = F], as.data.frame(as.matrix(y.counts[,-1])%*%W)) %>% 
+    tidyr::gather(facility, y.neighbors, -date)
+  if(is.factor(df$facility)){
+    tmp$facility = factor(tmp$facility, levels = levels(df$facility))  
+  }
+  df = merge(df, tmp, by = c('date','facility'))
+  
+  return(df)
+}
+
+### add autoregressive terms to the data.
+# df: Input data frame.
+# target_col: name of outcome column.
+# num_terms: 
+add_autoregressive <- function(df, target_col = 'y'){
+  
+  if(!(target_col %in% colnames(df))){
+    stop('need a target column to autoregress')
+  }
+  
+  tmp <- lapply(unique(df$facility), function(xx) {
+    tt <- df %>% filter(facility == xx) %>% arrange(date)
+    tt[,'y.AR1'] = c(NA, tt[1:(nrow(tt) - 1), target_col, drop = T])
+    return(tt)
+  })
+  
+  df <- do.call('rbind',tmp)
+  return(df)
+}
+
+
 ### Randomly sample from a quasipoisson. Do this by sampling from a negative binomial with dispersion parameters chosen to emulate the quasipoisson.
 # n: number of samples.
 # mu: mean of the points.
@@ -48,6 +133,48 @@ make_district_adjacency <- function(df, scale_by_num_neighbors = F){
   
   return(W)
 }
+
+
+### Make the "W2" matrix, as I am calling it, which is diag(W1) - W. I.e. this is the negative adjacency matrix with the total number of neighbors for each facility on the diagonal.
+# df: Input data frame with columns "facility" and "district"
+make_district_W2_matrix <- function(df){
+  # create the list of matching facilities
+  D2 = df %>% dplyr::select(district, facility) %>% distinct()
+  pairs = full_join(D2, D2, by = 'district') %>%
+    filter(facility.x != facility.y) %>%
+    dplyr::select(-district)
+  
+  # get unique facilities
+  facilities = unique(df$facility) %>% sort()
+  
+  # initialize the W2 matrix (note that what I am calling W2 here is what the original paper calls diag(W1) - W)
+  W2 = matrix(0, nrow = length(facilities), ncol = length(facilities))
+  colnames(W2) = facilities
+  rownames(W2) = facilities
+  
+  for(i in 1:length(facilities)){
+    f1 = facilities[i]
+    
+    # get the pairs with this facility
+    tmp = pairs %>% filter(facility.x == f1)
+    
+    if(nrow(tmp) == 0){
+      print('havent done single-district facilities yet')
+      browser()
+    }else{
+      # put -1 where there are pairs of facilities
+      matid = match(tmp$facility.y, facilities)
+      W2[i,matid] = -1
+    }
+    
+    # get the number of neighbors this facility has
+    W2[i,i] = pairs %>% filter(facility.x == f1) %>% nrow()
+    # print(sprintf('%s: NUM neighbors = %s', f1, W2[i,i]))
+  }
+  
+  return(W2)
+}
+
 
 #### Simulation Functions ####
 
@@ -202,9 +329,9 @@ simulate_data <- function(district_sizes, R = 1, seed = 10, type = 'WF', family 
     
   }else if(type == 'CAR'){
     # extracting values.
-    rho = list(...)$rho_DGP
-    alpha = list(...)$alpha_DGP
-    tau2 = list(...)$tau2_DGP
+    rho = list(...)$rho
+    alpha = list(...)$alpha
+    tau2 = list(...)$tau2
     
     # checking all values are in parameters.
     if(is.null(rho)){stop('please put in a rho_DGP value with CAR DGP')}
@@ -432,7 +559,7 @@ simulate_data <- function(district_sizes, R = 1, seed = 10, type = 'WF', family 
         summarize(y_exp = sum(y_exp),
                   y_var = sum(y_var),
                   y = sum(y),
-                  y_true = sum(y))
+                  y_true = sum(y), .groups = 'drop')
       district
     })
   }else{
@@ -442,4 +569,28 @@ simulate_data <- function(district_sizes, R = 1, seed = 10, type = 'WF', family 
   # make list of values to return.
   res_lst = list(df_list = df_lst, district_list = district_lst, betas = betas)
   return(res_lst)
+}
+#### CAR functions ####
+
+### Make the Leroux precision matrix from a data frame.
+# df: Input data frame with columns "facility" and "district". 
+# rho: The spatial parameter.
+make_precision_mat <- function(df, rho, W2 = NULL){
+  # check the rho value
+  if(rho < 0 | rho >= 1){
+    stop('please input a rho in [0,1)')
+  }
+  
+  # get unique facilities
+  facilities = unique(df$facility) %>% sort()
+  
+  # create the <W2 = diag(W1) - W> matrix
+  if(is.null(W2)){
+    W2 <- make_district_W2_matrix(df)
+  }
+  
+  # make the final Q matrix
+  Q = rho*W2 + (1-rho)*diag(rep(1, length(facilities)))
+  
+  return(Q)
 }

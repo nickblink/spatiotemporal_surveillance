@@ -9,91 +9,44 @@ library(rstan)
 source('code/functions.R')
 rstan_options(auto_write = TRUE)
 
-# get the parameters, separated by ":".
-# For submission to a high performance computing cluster, this allows parameters to be input with `inputs <- commandArgs(trailingOnly = TRUE)`
-inputs <- c('p=0.1:b0_mean=6:b1_mean=n0.25:missingness=mcar:DGP=WF:R=1000:num_jobs=50:output_path=mcar01_WF_QPtheta9_beta06_beta1n025_ID499135_2023_12_05:theta=9:family=quasipoisson\r','3')
+# Weinberger-Fulcher Quasi-poisson DGP Arguments
+WF_QP_DGP_arguments <- list(district_sizes = c(4, 6, 10), # size of the districts
+                      R = 10, # number of simulated data sets
+                      seed = 1, # random seed
+                      end_date = '2020-12-01', # last date of data created.
+                      b0_mean = 6, # mean value b0 is sampled from.
+                      b1_mean = -0.25, # mean value b1 is sampled from.
+                      type = 'WF', # type of DGP: 'WF', 'freqGLM', or 'CAR'.
+                      family = 'quasipoisson', # family of DGP
+                      theta = 4) # dispersion parameter for QP DGP
 
-inputs <- c('p=0.1:b0_mean=6:b1_mean=n0.25:missingness=mcar:DGP=freqGLM:R=1000:rho_DGP=0.2:alpha_DGP=0.2:num_jobs=50:output_path=mcar01_WF_QPtheta9_beta06_beta1n025_ID499135_2023_12_05:theta=9:family=quasipoisson\r','3')
+# freqGLM DGP
+freqGLM_DGP_arguments <- list(district_sizes = c(4, 6, 10), # size of the districts
+                          R = 10, # number of simulated data sets
+                          seed = 1, # random seed
+                          end_date = '2020-12-01', # last date of data created.
+                          b0_mean = 6, # mean value b0 is sampled from.
+                          b1_mean = -0.25, # mean value b1 is sampled from.
+                          type = 'freqGLM', # type of DGP: 'WF', 'freqGLM', or 'CAR'.
+                          family = 'poisson', # family of DGP
+                          rho = 0.3, # spatial correlation of freqGLM process in DGP.
+                          alpha = 0.3) # temporal correlation of freqGLM process in DGP.
 
-### Get parameters
-{
-# pull parameters into proper format
-params <- list()
-
-inputs[[1]] <- gsub('\r', '', inputs[[1]])
-params[['job_id']] <- as.integer(inputs[[2]])
-for(str in strsplit(inputs[[1]],':')[[1]]){
-  tmp = strsplit(str, '=')[[1]]
-  nn = tmp[1]
-  val = tolower(tmp[2])
-  if(nn %in% c('p','rho_DGP','alpha_DGP','tau2_DGP','rho_MAR','alpha_MAR','tau2_MAR','gamma','theta')){
-    val = as.numeric(val)
-  }else if(nn == 'b0_mean'){
-    val = as.numeric(strsplit(val, '/')[[1]])
-  }else if(nn == 'b1_mean'){
-    val = tryCatch({as.numeric(val)
-    }, warning = function(w){
-      if(substr(val,1,1) == 'n'){
-        return(-as.numeric(substr(val, 2, nchar(val))))
-      }
-    })
-  }else if(nn %in% c('R','num_jobs')){
-    val = as.integer(val)
-  }
-  params[[nn]] = val
-}
-
-# check that proper missingness is input
-if(!(params[['missingness']] %in% c('mcar','mar','mnar'))){
-  stop('please input a proper missingness')
-}else{
-  print(sprintf('proceeding with %s missingness', params[['missingness']]))
-}
-
-# get sequence of simulation iterations to run
-# (deprecated - now I just simulate R_new # of data frames)
-if(params[['job_id']] < params[['num_jobs']]){
-  seq <- (floor(params[['R']]/params[['num_jobs']])*(params[['job_id']] - 1) + 1):(floor(params[['R']]/params[['num_jobs']])*params[['job_id']])
-}else{
-  seq <- (floor(params[['R']]/params[['num_jobs']])*(params[['job_id']] - 1) + 1):params[['R']]
-}
-
-
-R_new = length(seq)
-
-# input arguments to data simulation
-arguments = list(district_sizes = c(4, 6, 10), 
-                 R = R_new, 
-                 seed = params[['job_id']],
-                 end_date = '2020-12-01', 
-                 b0_mean = params[['b0_mean']], 
-                 b1_mean = params[['b1_mean']])
-
-if(params[['DGP']] == 'car'){
-  arguments = c(arguments, 
-                   list(type = 'CAR',
-                   rho = params[['rho_DGP']], 
-                   alpha = params[['alpha_DGP']], 
-                   tau2 = params[['tau2_DGP']]))
-}else if(params[['DGP']] == 'freqglm'){
-  arguments = c(arguments,
-                list(type = 'freqGLM',
-                     rho = params[['rho_DGP']],  
-                     alpha = params[['alpha_DGP']]))
-}
-
-if(!is.null(params[['family']])){
-  if(params[['family']] == 'quasipoisson'){
-    arguments = c(arguments,
-                  list(family = 'quasipoisson',
-                       theta = params[['theta']]))
-  }else if(params[['family']] != 'poisson'){
-    stop('improper family for DGP')
-  }
-}
+# CAR DGP
+CAR_DGP_arguments <- list(district_sizes = c(4, 6, 10), # size of the districts
+                          R = 10, # number of simulated data sets
+                          seed = 1, # random seed
+                          end_date = '2020-12-01', # last date of data created.
+                          b0_mean = 6, # mean value b0 is sampled from.
+                          b1_mean = -0.25, # mean value b1 is sampled from.
+                          type = 'CAR', # type of DGP: 'WF', 'freqGLM', or 'CAR'.
+                          family = 'poisson', # family of DGP
+                          rho = 0.3, # spatial correlation of CAR process in DGP.
+                          alpha = 0.3, # temporal correlation of CAR process in DGP.
+                          tau2 = 1) # variance of CAR process in DGP
 
 # Simulate the data
-lst <- do.call(simulate_data, arguments)
+lst <- do.call(simulate_data, freqGLM_DGP_arguments)
 
 # initialize the error catcher for each run
 errors <- list(freqGLM = data.frame(i = NULL, error = NULL),
@@ -102,37 +55,6 @@ errors <- list(freqGLM = data.frame(i = NULL, error = NULL),
 
 }
 
-SO FAR GOT THIS WORKING FOR WF DGP, but havent gotten freqGLM or CAR yet.
-
-### File saving (for cluster only)
-{
-# set up the output folder
-date <- gsub('-','_', Sys.Date())
-if(params[['output_path']] == 'na'){
-  params[['output_path']] <- sprintf('results/%s%s_%s_%s', params[['missingness']], gsub('\\.','', params[['p']]), params[['DGP']], date)
-}else{
-  params[['output_path']] <- sprintf('results/%s', params[['output_path']])
-}
-
-if(!file.exists(params[['output_path']])){
-  dir.create(params[['output_path']], recursive = T)
-}
-results_file <- sprintf('%s/sim_results_p%1.1f_%s_%i(%i).RData', params[['output_path']], params[['p']], params[['missingness']], params[['job_id']], params[['num_jobs']])
-
-if(file.exists(results_file)){
-  iter = 0
-  while(file.exists(results_file)){
-    iter = iter + 1
-    results_file <- sprintf('%s/sim_results_p%1.1f_%s_%i(%i)(%i).RData', params[['output_path']], params[['p']], params[['missingness']], params[['job_id']], params[['num_jobs']], iter)
-  }
-}
-
-# save the data
-if(params[['job_id']] == 1){
-  save(lst, file = paste0(params[['output_path']], '/simulated_data.RData'))
-}
-
-}
 
 # function to run all models for a specific dataset
 one_run <- function(lst, i, models = c('freq', 'WF', 'CAR'), WF_params = list(R_PI = 200), freqGLM_params = list(R_PI = 200), MCMC_params = list(burnin.stan = 1000, n.sample.stan = 2000, burnin.CARBayesST = 5000, n.sample.CARBayesST = 10000)){
